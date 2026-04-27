@@ -2,10 +2,11 @@
 
 > Étudiant à l'EGS — @azaload
 
-Outil **d'aide à la décision** qui surveille en continu plusieurs actifs
-(actions, cryptos, or) et émet des alertes BUY / SELL / HOLD avec un score
-de confiance et la liste des raisons. Conçu pour être lisible, modulaire et
-extensible.
+Outil **d'aide à la décision** qui surveille en continu un grand nombre
+d'actifs (cryptos spot + futures, actions, ETFs, indices, commodities,
+forex) et émet des alertes BUY / SELL / HOLD ainsi que LONG / SHORT
+(détection pump/dump pour futures), avec un score de confiance et la
+liste des raisons. Disponible en CLI et en **dashboard web** temps réel.
 
 ## ⚠️ Disclaimer
 
@@ -49,9 +50,53 @@ pip install -r requirements.txt
 cp .env.example .env   # éditer si vous voulez activer news/Telegram/Discord
 ```
 
-## Utilisation
+## Dashboard web (recommandé)
 
-Boucle continue (par défaut, 5 actifs, polling toutes les 5 minutes) :
+```bash
+python web.py
+# puis ouvrir http://127.0.0.1:8000
+```
+
+Le dashboard fournit :
+
+- **Watchlist** persistée (`data/watchlist.json`) avec ajout/retrait à chaud
+- **Catalogue** complet : recherche libre + filtre par type
+  (Crypto Spot / Crypto Futures / Stocks / ETFs / Commodities / Indices / Forex)
+- **Cartes signaux** colorées (BUY / SELL / HOLD / LONG / SHORT) avec
+  confiance, entrée, SL, TP, R/R
+- **Feed d'alertes en temps réel** via Server-Sent Events (SSE), pas de
+  polling inutile
+- **Détail par actif** : breakdown des stratégies, raisons, triggers
+  pump/dump activés
+- **Configuration éditable à chaud** : seuils de confiance, paramètres
+  pump/dump, intervalle de scan
+- **Bouton "Scan now"** pour forcer un cycle immédiat
+
+Le scanner tourne **en parallèle** pour la watchlist (concurrence
+configurable, 8 par défaut) afin de gérer des dizaines d'actifs sans
+bloquer.
+
+### Catalogue dynamique
+
+Le catalogue agrège trois sources :
+
+- **Binance Spot** : *toutes* les paires USDT actives, triées par volume
+  24h (récupéré via `/exchangeInfo` + `/ticker/24hr`, cache 10 min).
+- **Binance Futures (perpétuels USDT-M)** : toutes les paires actives.
+- **Liste curée Yahoo Finance** : ~100 entrées (cf. `bot/catalog.py`)
+  couvrant indices US/EU/Asie, commodities (or, argent, pétrole, gaz,
+  agro), ETFs broad market, sectoriels, obligataires et exposition
+  crypto, plus une sélection de mega-cap et mid-cap US, et les paires
+  forex majeures.
+
+N'importe quel ticker Yahoo arbitraire reste utilisable : la recherche
+catalog le retournera s'il match, sinon il peut être ajouté manuellement
+via l'API.
+
+## Mode CLI
+
+Boucle continue (par défaut, 8 actifs préchargés, polling toutes les 5
+minutes) :
 
 ```bash
 python main.py
@@ -215,20 +260,44 @@ d'environnement / `.env` pour les secrets.
 
 ```
 azaload/
-├── main.py                # Boucle de polling + dispatch des alertes
+├── main.py                # CLI: boucle de polling + dispatch alertes
+├── web.py                 # Web: lance FastAPI + scanner asynchrone
 ├── config.py              # Config typée (actifs, poids, risque, secrets)
 ├── requirements.txt
 ├── .env.example
-└── bot/
-    ├── data_sources.py    # Binance Spot+Futures / Yahoo / Alpha Vantage + retries
-    ├── indicators.py      # EMA, MACD, RSI, BB, ATR, OBV via `ta`
-    ├── strategies.py      # Trend / Breakout / Mean reversion (BUY/SELL/HOLD)
-    ├── pump_dump.py       # Détecteur LONG/SHORT futures multi-trigger
-    ├── sentiment.py       # Lexique + NewsAPI (optionnel)
-    ├── signals.py         # Combinaison pondérée + SL/TP via ATR
-    ├── alerts.py          # Terminal coloré + Telegram + Discord
-    └── logger.py          # Logger rotatif (console + fichier)
+├── bot/                   # ── Cœur métier (utilisable seul ou via web) ──
+│   ├── catalog.py         # Catalogue dynamique (Binance + curé Yahoo)
+│   ├── data_sources.py    # Binance Spot+Futures / Yahoo / Alpha Vantage
+│   ├── indicators.py      # EMA, MACD, RSI, BB, ATR, OBV via `ta`
+│   ├── strategies.py      # Trend / Breakout / Mean reversion (BUY/SELL/HOLD)
+│   ├── pump_dump.py       # Détecteur LONG/SHORT futures multi-trigger
+│   ├── sentiment.py       # Lexique + NewsAPI (optionnel)
+│   ├── signals.py         # Combinaison pondérée + SL/TP via ATR
+│   ├── alerts.py          # Terminal coloré + Telegram + Discord
+│   └── logger.py          # Logger rotatif (console + fichier)
+└── webapp/                # ── Dashboard web ──
+    ├── api.py             # FastAPI: REST + SSE + lifespan scanner
+    ├── scanner.py         # Cycle asynchrone parallèle (asyncio + thread pool)
+    ├── state.py           # État partagé thread-safe + persistence watchlist
+    ├── broadcaster.py     # Pub/sub SSE multi-clients
+    └── static/            # SPA vanilla (HTML + CSS + JS, pas de toolchain)
 ```
+
+### Endpoints API web
+
+| Méthode | Chemin                                  | Rôle                                |
+|---------|-----------------------------------------|-------------------------------------|
+| GET     | `/`                                     | SPA dashboard                       |
+| GET     | `/api/status`                           | État scanner + config courante      |
+| GET     | `/api/catalog?q=…&type=…&minVolume=…`   | Recherche dans le catalogue         |
+| GET     | `/api/catalog/stats`                    | Compteurs par type d'actif          |
+| GET/POST/DELETE | `/api/watchlist`                | Gestion de la watchlist             |
+| GET     | `/api/signals`                          | Tous les signaux courants           |
+| GET     | `/api/pumps`                            | Tous les signaux pump/dump          |
+| GET     | `/api/alerts`                           | Historique d'alertes (200 max)      |
+| POST    | `/api/scan`                             | Force un cycle immédiat             |
+| GET/POST | `/api/config`                          | Lire / modifier les seuils à chaud  |
+| GET     | `/api/stream`                           | Stream SSE (events: status / signal / pump / alert / watchlist / config) |
 
 Le découplage permet d'ajouter facilement :
 

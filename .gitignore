@@ -11,6 +11,8 @@ env/
 logs/
 *.log
 
+data/
+
 .vscode/
 .idea/
 .DS_Store

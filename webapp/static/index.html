@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>azaload — trading alerts</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">⚡</span>
+      <h1>azaload</h1>
+      <span class="subtitle">trading alerts dashboard</span>
+    </div>
+    <div class="header-stats" id="header-stats">
+      <span class="stat"><label>watchlist</label><b id="stat-watchlist">—</b></span>
+      <span class="stat"><label>cycles</label><b id="stat-cycles">—</b></span>
+      <span class="stat"><label>alertes</label><b id="stat-alerts">—</b></span>
+      <span class="stat status-dot" id="status-dot" title="status"></span>
+    </div>
+    <div class="header-actions">
+      <button id="btn-scan" title="Lancer un scan immédiat">Scan now</button>
+      <button id="btn-catalog">+ Catalogue</button>
+      <button id="btn-config" class="ghost">⚙</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <h3>Watchlist</h3>
+      <div class="watchlist" id="watchlist"></div>
+    </aside>
+
+    <main class="main">
+      <div class="filters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="BUY">BUY</button>
+        <button class="chip" data-filter="SELL">SELL</button>
+        <button class="chip pump" data-filter="LONG">⚡ LONG</button>
+        <button class="chip dump" data-filter="SHORT">⚡ SHORT</button>
+        <button class="chip" data-filter="HOLD">HOLD</button>
+        <span class="filter-spacer"></span>
+        <input id="search-input" type="search" placeholder="Filtrer par symbole/nom" />
+      </div>
+      <div class="grid" id="signals-grid">
+        <div class="empty-hint">
+          Watchlist vide ou cycle pas encore terminé. Cliquez sur <b>Scan now</b>
+          ou ajoutez des actifs depuis le <b>Catalogue</b>.
+        </div>
+      </div>
+    </main>
+
+    <aside class="alerts">
+      <h3>Live alerts</h3>
+      <div class="alerts-feed" id="alerts-feed">
+        <div class="empty-hint">En attente d'alertes…</div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- Catalogue dialog -->
+  <dialog id="catalog-dialog">
+    <div class="dialog-head">
+      <h2>Catalogue</h2>
+      <button class="ghost" data-close-dialog="catalog-dialog">✕</button>
+    </div>
+    <div class="catalog-stats" id="catalog-stats"></div>
+    <div class="catalog-controls">
+      <input id="catalog-search" type="search" placeholder="Rechercher (BTC, AAPL, gold…)" />
+      <select id="catalog-type">
+        <option value="">Tous types</option>
+        <option value="crypto">Crypto Spot</option>
+        <option value="futures">Crypto Futures (perp)</option>
+        <option value="stock">Actions</option>
+        <option value="etf">ETFs</option>
+        <option value="commodity">Commodities</option>
+        <option value="index">Indices</option>
+        <option value="forex">Forex</option>
+      </select>
+      <button id="catalog-refresh" class="ghost">↻</button>
+    </div>
+    <div class="catalog-list" id="catalog-list"></div>
+  </dialog>
+
+  <!-- Config dialog -->
+  <dialog id="config-dialog">
+    <div class="dialog-head">
+      <h2>Configuration</h2>
+      <button class="ghost" data-close-dialog="config-dialog">✕</button>
+    </div>
+    <form id="config-form" class="config-form">
+      <fieldset>
+        <legend>Cycle</legend>
+        <label>Intervalle (s)
+          <input type="number" name="poll_interval_seconds" min="15" step="15" />
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Pipeline classique (BUY/SELL)</legend>
+        <label>Confiance min pour alerte (%)
+          <input type="number" name="risk.min_confidence_to_alert" min="0" max="100" step="1" />
+        </label>
+        <label>SL × ATR
+          <input type="number" name="risk.sl_atr_multiplier" min="0.1" step="0.1" />
+        </label>
+        <label>TP × ATR
+          <input type="number" name="risk.tp_atr_multiplier" min="0.1" step="0.1" />
+        </label>
+      </fieldset>
+      <fieldset>
+        <legend>Pump/Dump (LONG/SHORT futures)</legend>
+        <label>Probabilité min (%)
+          <input type="number" name="pump_dump.min_probability" min="0" max="100" step="1" />
+        </label>
+        <label>Volume spike ratio
+          <input type="number" name="pump_dump.volume_spike_ratio" min="1" step="0.1" />
+        </label>
+        <label>Accélération prix × ATR
+          <input type="number" name="pump_dump.price_accel_atr_mult" min="0.5" step="0.1" />
+        </label>
+        <label>RSI thrust ΔRSI(3)
+          <input type="number" name="pump_dump.rsi_thrust_delta" min="1" step="0.5" />
+        </label>
+        <label>Expansion volatilité ×
+          <input type="number" name="pump_dump.volatility_expansion" min="1" step="0.05" />
+        </label>
+      </fieldset>
+      <div class="form-actions">
+        <button type="submit">Enregistrer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Asset detail dialog -->
+  <dialog id="detail-dialog">
+    <div class="dialog-head">
+      <h2 id="detail-title">Détail</h2>
+      <button class="ghost" data-close-dialog="detail-dialog">✕</button>
+    </div>
+    <div id="detail-body"></div>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

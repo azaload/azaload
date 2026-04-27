@@ -47,17 +47,19 @@ class PumpDumpConfig:
     w_full_body: float = 5.0
     w_prior_squeeze: float = 3.0
 
-    # Seuils
-    volume_spike_ratio: float = 2.5         # volume / SMA20
-    price_accel_atr_mult: float = 1.5       # |ret_1| ≥ k × atr/close
+    # Seuils — réglage strict par défaut pour ne garder que les signaux à
+    # très haute probabilité (cf. README, section "Tuning").
+    volume_spike_ratio: float = 3.0         # volume / SMA20 ≥ 3×
+    price_accel_atr_mult: float = 2.0       # |ret_1| ≥ 2 × atr/close
     range_lookback: int = 20                # bougies pour breakout/breakdown
-    rsi_thrust_delta: float = 10.0          # delta RSI sur 3 bougies
-    volatility_expansion: float = 1.30      # bb_width / bb_width_n−3
-    full_body_ratio: float = 0.7            # |close-open| / (high-low)
-    squeeze_ratio: float = 0.85             # mean(bb_width récent) / mean(bb_width plus ancien)
+    rsi_thrust_delta: float = 12.0          # delta RSI sur 3 bougies
+    volatility_expansion: float = 1.40      # bb_width / bb_width_n−3
+    full_body_ratio: float = 0.75           # |close-open| / (high-low)
+    squeeze_ratio: float = 0.80             # mean(bb_width récent) / mean(bb_width plus ancien)
 
-    # Seuil minimal pour émettre un signal (0-100)
-    min_probability: float = 70.0
+    # Seuil minimal pour émettre un signal (0-100). Strict: au moins 6 des
+    # 8 critères en moyenne pondérée doivent converger.
+    min_probability: float = 80.0
 
 
 @dataclass

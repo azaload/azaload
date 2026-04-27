@@ -26,7 +26,7 @@ import time
 from typing import Iterable
 
 from config import CONFIG, AssetConfig, Config
-from bot.alerts import dispatch, dump_json
+from bot.alerts import dispatch, dump_json, format_terminal
 from bot.data_sources import DataSourceError, fetch_market_data
 from bot.indicators import add_indicators
 from bot.logger import get_logger
@@ -71,8 +71,17 @@ def analyse_asset(asset: AssetConfig, cfg: Config) -> Signal | None:
     return signal
 
 
-def run_cycle(cfg: Config, assets: Iterable[AssetConfig]) -> list[Signal]:
-    """Un cycle d'analyse sur tous les actifs."""
+def run_cycle(
+    cfg: Config,
+    assets: Iterable[AssetConfig],
+    *,
+    verbose: bool = False,
+) -> list[Signal]:
+    """Un cycle d'analyse sur tous les actifs.
+
+    Si `verbose` est vrai, on affiche le détail de chaque signal (même HOLD
+    ou sous le seuil) pour donner de la visibilité sur l'état du marché.
+    """
     signals: list[Signal] = []
     for asset in assets:
         log.info("Analyse de %s (%s, %s)", asset.symbol, asset.name, asset.interval)
@@ -81,10 +90,12 @@ def run_cycle(cfg: Config, assets: Iterable[AssetConfig]) -> list[Signal]:
             continue
         signals.append(sig)
 
-        if (
+        alert_worthy = (
             sig.action != "HOLD"
             and sig.confidence >= cfg.risk.min_confidence_to_alert
-        ):
+        )
+
+        if alert_worthy:
             dispatch(
                 sig,
                 telegram_token=cfg.telegram_bot_token,
@@ -93,9 +104,12 @@ def run_cycle(cfg: Config, assets: Iterable[AssetConfig]) -> list[Signal]:
             )
         else:
             log.info(
-                "%s: %s @ %.1f%% (sous seuil ou HOLD)",
-                sig.symbol, sig.action, sig.confidence,
+                "%s: %s @ %.1f%% (sous seuil %.0f%% ou HOLD) — pas d'alerte envoyée",
+                sig.symbol, sig.action, sig.confidence, cfg.risk.min_confidence_to_alert,
             )
+            if verbose:
+                # Affichage local seulement (pas de Telegram/Discord)
+                print(format_terminal(sig))
     return signals
 
 
@@ -121,6 +135,12 @@ def parse_args() -> argparse.Namespace:
         help="Intervalle de polling en secondes (override de la config)",
     )
     p.add_argument("--json", action="store_true", help="Affiche aussi le JSON brut des signaux")
+    p.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Affiche le détail (raisons, scores) de chaque signal, même HOLD/sous seuil",
+    )
     return p.parse_args()
 
 
@@ -150,14 +170,22 @@ def main() -> None:
         "Ne constitue pas un conseil financier."
     )
 
+    cycle = 0
     while True:
         try:
-            signals = run_cycle(cfg, assets)
+            cycle += 1
+            log.info("=== Cycle #%d ===", cycle)
+            signals = run_cycle(cfg, assets, verbose=args.verbose)
             if args.json:
                 for s in signals:
                     print(dump_json(s))
             if args.once:
+                log.info("Mode --once: sortie après un seul cycle.")
                 return
+            log.info(
+                "Cycle #%d terminé. Prochain cycle dans %ds (Ctrl+C pour arrêter).",
+                cycle, cfg.poll_interval_seconds,
+            )
             time.sleep(cfg.poll_interval_seconds)
         except KeyboardInterrupt:
             log.info("Arrêt demandé par l'utilisateur.")

@@ -66,6 +66,18 @@ Filtrer les actifs et baisser le seuil de confiance :
 python main.py --symbols BTCUSDT,ETHUSDT --min-confidence 55 --once
 ```
 
+Mode verbeux (affiche le détail de chaque signal, même HOLD/sous seuil — utile
+pour voir ce que le bot perçoit du marché) :
+
+```bash
+python main.py --symbols BTCUSDT --verbose --once
+```
+
+> Sans `--once`, le bot tourne en continu : un cycle d'analyse, puis sleep
+> pendant `poll_interval_seconds` (5 min par défaut). Pendant le sleep il
+> n'affiche rien — c'est normal. Utilisez `--interval 60` pour tester plus
+> rapidement.
+
 Analyse ad hoc d'un seul symbole :
 
 ```bash

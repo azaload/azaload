@@ -10,6 +10,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
+from bot.pump_dump import PumpDumpConfig
+
 try:
     from dotenv import load_dotenv
 
@@ -18,7 +20,7 @@ except ImportError:
     pass
 
 
-AssetType = Literal["crypto", "stock", "commodity"]
+AssetType = Literal["crypto", "stock", "commodity", "futures"]
 
 
 @dataclass
@@ -63,10 +65,15 @@ class Config:
             AssetConfig("AAPL", "Apple", "stock", interval="1h"),
             AssetConfig("MSFT", "Microsoft", "stock", interval="1h"),
             AssetConfig("GC=F", "Gold Futures", "commodity", interval="1h"),
+            # Futures perpétuels Binance USDT-M (pump/dump = LONG/SHORT)
+            AssetConfig("BTCUSDT", "BTC Perp", "futures", interval="15m"),
+            AssetConfig("ETHUSDT", "ETH Perp", "futures", interval="15m"),
+            AssetConfig("SOLUSDT", "SOL Perp", "futures", interval="15m"),
         ]
     )
     weights: StrategyWeights = field(default_factory=StrategyWeights)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    pump_dump: PumpDumpConfig = field(default_factory=PumpDumpConfig)
 
     poll_interval_seconds: int = 300
 

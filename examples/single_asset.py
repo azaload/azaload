@@ -14,9 +14,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from config import CONFIG, AssetConfig  # noqa: E402
-from bot.alerts import format_terminal  # noqa: E402
+from bot.alerts import format_pump_dump_terminal, format_terminal  # noqa: E402
 from bot.data_sources import fetch_market_data  # noqa: E402
 from bot.indicators import add_indicators  # noqa: E402
+from bot.pump_dump import detect_pump_dump  # noqa: E402
 from bot.sentiment import fetch_news_sentiment  # noqa: E402
 from bot.signals import build_signal  # noqa: E402
 from bot.strategies import run_all  # noqa: E402
@@ -24,7 +25,10 @@ from bot.strategies import run_all  # noqa: E402
 
 def main() -> None:
     if len(sys.argv) < 3:
-        print("Usage: python examples/single_asset.py <SYMBOL> <stock|crypto|commodity>")
+        print(
+            "Usage: python examples/single_asset.py <SYMBOL> "
+            "<stock|crypto|commodity|futures>"
+        )
         sys.exit(1)
 
     symbol, asset_type = sys.argv[1], sys.argv[2]
@@ -45,6 +49,16 @@ def main() -> None:
         risk=CONFIG.risk,
     )
     print(format_terminal(signal))
+
+    pump = detect_pump_dump(
+        df_ind,
+        symbol=asset.symbol,
+        name=asset.name,
+        cfg=CONFIG.pump_dump,
+        sl_atr_mult=CONFIG.risk.sl_atr_multiplier,
+        tp_atr_mult=CONFIG.risk.tp_atr_multiplier,
+    )
+    print(format_pump_dump_terminal(pump))
 
 
 if __name__ == "__main__":

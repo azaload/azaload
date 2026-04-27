@@ -49,16 +49,13 @@ def _validate(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df[_REQUIRED_COLS].astype(float)
 
 
-def fetch_binance(symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame:
-    """Récupère les klines depuis Binance (endpoint public, pas de clé)."""
+def _fetch_binance_klines(base_url: str, symbol: str, interval: str, limit: int) -> pd.DataFrame:
     if interval not in _BINANCE_INTERVAL_MAP:
         raise DataSourceError(f"Intervalle Binance non supporté: {interval}")
 
-    url = "https://api.binance.com/api/v3/klines"
     params = {"symbol": symbol.upper(), "interval": interval, "limit": min(limit, 1000)}
-
     try:
-        resp = requests.get(url, params=params, timeout=10)
+        resp = requests.get(base_url, params=params, timeout=10)
         resp.raise_for_status()
     except requests.RequestException as exc:
         raise DataSourceError(f"Binance HTTP error pour {symbol}: {exc}") from exc
@@ -78,6 +75,20 @@ def fetch_binance(symbol: str, interval: str = "1h", limit: int = 300) -> pd.Dat
     df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
     df = df.set_index("timestamp")
     return _validate(df, symbol)
+
+
+def fetch_binance(symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame:
+    """Récupère les klines depuis Binance Spot (endpoint public, pas de clé)."""
+    return _fetch_binance_klines(
+        "https://api.binance.com/api/v3/klines", symbol, interval, limit
+    )
+
+
+def fetch_binance_futures(symbol: str, interval: str = "1h", limit: int = 300) -> pd.DataFrame:
+    """Récupère les klines depuis Binance USDT-M Futures (perpetuals)."""
+    return _fetch_binance_klines(
+        "https://fapi.binance.com/fapi/v1/klines", symbol, interval, limit
+    )
 
 
 def fetch_yfinance(symbol: str, interval: str = "1h", lookback: int = 300) -> pd.DataFrame:
@@ -175,6 +186,8 @@ def fetch_market_data(
         try:
             if asset_type == "crypto":
                 return fetch_binance(symbol, interval=interval, limit=lookback)
+            if asset_type == "futures":
+                return fetch_binance_futures(symbol, interval=interval, limit=lookback)
             if asset_type in ("stock", "commodity"):
                 return fetch_yfinance(symbol, interval=interval, lookback=lookback)
             raise DataSourceError(f"Type d'actif non supporté: {asset_type}")

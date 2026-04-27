@@ -17,21 +17,24 @@ responsabilité.
 
 ## Fonctionnalités
 
-- **Sources multiples** : Binance (crypto, public), Yahoo Finance (actions
-  & matières premières), Alpha Vantage (optionnel).
+- **Sources multiples** : Binance Spot et **Binance USDT-M Futures**
+  (perpétuels), Yahoo Finance (actions & matières premières), Alpha
+  Vantage (optionnel).
 - **Indicateurs techniques** : EMA(20/50/200), MACD, RSI, Bollinger Bands,
   ATR, OBV, ratio de volume.
-- **3 stratégies indépendantes** :
+- **3 stratégies indépendantes** (signaux BUY/SELL/HOLD spot) :
   - *Trend following* — alignement EMAs + confirmation MACD
   - *Breakout* — cassure des bandes de Bollinger + confirmation volume
   - *Mean reversion* — RSI extrême + écart à la moyenne mobile
+- **Détecteur de pump/dump dédié futures** (signaux LONG/SHORT) — voir
+  section dédiée plus bas.
 - **Score de sentiment** (optionnel) basé sur les titres de news (NewsAPI).
 - **Signal final** combiné, pondéré, avec :
-  - action BUY/SELL/HOLD
+  - action BUY/SELL/HOLD (spot) ou LONG/SHORT (futures)
   - prix d'entrée, stop loss et take profit (basés sur l'ATR)
   - ratio risk/reward
-  - score de confiance 0–100 %
-  - raisons détaillées
+  - score de confiance / probabilité 0–100 %
+  - raisons détaillées (audit complet de chaque trigger)
 - **Alertes** : terminal coloré, Telegram, Discord (les deux derniers
   optionnels via variables d'environnement).
 - **Logs** rotatifs dans `logs/bot.log`.
@@ -109,6 +112,95 @@ python examples/single_asset.py AAPL stock
 ──────────────────────────────────────────────────────────────────────
 ```
 
+## Détection pump / dump (LONG / SHORT futures)
+
+Le module `bot/pump_dump.py` est un **détecteur dédié aux mouvements
+violents** sur futures. Il fonctionne en parallèle du pipeline classique
+et a son propre seuil. Il ne s'allume que lorsque plusieurs critères
+convergent simultanément, pour ne signaler que les configurations à
+**très haute probabilité**.
+
+### Critères évalués (poids par défaut)
+
+| Critère                      | Poids | Conditions                                                |
+|------------------------------|------:|-----------------------------------------------------------|
+| Volume spike                 | 22    | `volume / SMA20 ≥ 2.5×`                                   |
+| Accélération prix            | 22    | mouvement ≥ 1.5 × ATR%, dans la même direction sur 3 bougies |
+| Range break / breakdown      | 18    | sortie au-dessus/en-dessous des 20 dernières bougies      |
+| RSI thrust                   | 14    | ΔRSI ≥ 10 sur 3 bougies                                   |
+| Expansion de volatilité      | 10    | largeur Bollinger × 1.30 vs 3 bougies plus tôt            |
+| Confirmation OBV             | 6     | flux d'ordres aligné avec la direction                    |
+| Bougie pleine                | 5     | corps ≥ 70 % du range, dans la bonne direction            |
+| Squeeze préalable (bonus)    | 3     | compression de volatilité avant la cassure               |
+
+Le score est ramené sur 100. Un signal **LONG** ou **SHORT** n'est émis
+que si :
+
+1. La probabilité totale dépasse `min_probability` (70 % par défaut).
+2. Le volume spike est présent.
+3. ET au moins l'un des deux critères clés (accélération prix ou range
+   break) est présent.
+
+Cette double garde-fou élimine les faux positifs dus à un seul indicateur
+extrême.
+
+### Activer le détecteur sur les futures Binance
+
+Trois paires perpétuelles USDT-M (BTCUSDT, ETHUSDT, SOLUSDT) en 15 min
+sont préchargées dans `config.py`. Pour lancer une analyse pump/dump
+ciblée :
+
+```bash
+# Mode continu (cycle toutes les minutes par exemple)
+python main.py --interval 60 --symbols BTCUSDT,ETHUSDT,SOLUSDT --verbose
+
+# One-shot ciblé sur SOL avec affichage détaillé
+python examples/single_asset.py SOLUSDT futures
+```
+
+### Tuning
+
+Tous les paramètres sont dans `PumpDumpConfig` (`bot/pump_dump.py`) :
+
+```python
+from bot.pump_dump import PumpDumpConfig
+from config import CONFIG
+
+CONFIG.pump_dump = PumpDumpConfig(
+    volume_spike_ratio=3.0,     # plus strict → moins de signaux
+    price_accel_atr_mult=2.0,   # exige un mouvement ≥ 2 × ATR
+    min_probability=80.0,       # filtre seulement les très hautes proba
+)
+```
+
+### Exemple de sortie pump
+
+```
+══════════════════════════════════════════════════════════════════════
+  ⚡ PUMP DETECTED — LONG   BTCUSDT (BTC Perp)  2026-04-27 22:17 UTC
+  Probabilité    :  92.0%
+  Entrée         : 64210.500000
+  Stop Loss      : 63520.150000
+  Take Profit    : 65800.300000
+  Risk/Reward    : 2.30
+  Triggers actifs :
+    ✓ volume_spike
+    ✓ price_acceleration
+    ✓ range_break
+    ✓ rsi_thrust
+    ✓ volatility_expansion
+    ✓ obv_confirmation
+    ✓ full_body
+    · prior_squeeze
+  Raisons :
+    • Volume spike 4.17× (seuil 2.5×)
+    • Accélération prix ↑ ret_1=+1.85%, ret_3=+3.20% vs ATR%=0.62%
+    • Breakout au-dessus du range des 20 dernières bougies
+    • RSI thrust ↑ ΔRSI(3)=+18.4 (RSI=72.1)
+    • ...
+══════════════════════════════════════════════════════════════════════
+```
+
 ## Configuration
 
 Tout passe par `config.py` (édité directement) ou par variables
@@ -128,9 +220,10 @@ azaload/
 ├── requirements.txt
 ├── .env.example
 └── bot/
-    ├── data_sources.py    # Binance / Yahoo / Alpha Vantage + retries
+    ├── data_sources.py    # Binance Spot+Futures / Yahoo / Alpha Vantage + retries
     ├── indicators.py      # EMA, MACD, RSI, BB, ATR, OBV via `ta`
-    ├── strategies.py      # Trend / Breakout / Mean reversion
+    ├── strategies.py      # Trend / Breakout / Mean reversion (BUY/SELL/HOLD)
+    ├── pump_dump.py       # Détecteur LONG/SHORT futures multi-trigger
     ├── sentiment.py       # Lexique + NewsAPI (optionnel)
     ├── signals.py         # Combinaison pondérée + SL/TP via ATR
     ├── alerts.py          # Terminal coloré + Telegram + Discord
@@ -154,3 +247,9 @@ Le découplage permet d'ajouter facilement :
   d'exécution n'est fournie volontairement.
 - Sur les actions intraday, Yahoo Finance limite l'historique disponible
   (~60 jours pour les bougies < 1 jour).
+- Le détecteur pump/dump détecte le **début** d'un mouvement, pas son
+  ampleur finale. Les SL/TP sont basés sur l'ATR ; le R/R par défaut est
+  ~2.5 mais aucun setup ne garantit l'aboutissement de la cible.
+- Aucun système ne peut prédire les pumps "informationnels" qui n'ont pas
+  encore laissé d'empreinte sur le volume ou le prix. Le détecteur réagit
+  à la convergence d'indicateurs déjà visibles, pas à de la prescience.

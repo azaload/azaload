@@ -26,10 +26,17 @@ import time
 from typing import Iterable
 
 from config import CONFIG, AssetConfig, Config
-from bot.alerts import dispatch, dump_json, format_terminal
+from bot.alerts import (
+    dispatch,
+    dispatch_pump_dump,
+    dump_json,
+    format_pump_dump_terminal,
+    format_terminal,
+)
 from bot.data_sources import DataSourceError, fetch_market_data
 from bot.indicators import add_indicators
 from bot.logger import get_logger
+from bot.pump_dump import PumpDumpSignal, detect_pump_dump
 from bot.sentiment import fetch_news_sentiment
 from bot.signals import Signal, build_signal
 from bot.strategies import run_all
@@ -37,8 +44,19 @@ from bot.strategies import run_all
 log = get_logger("azaload.main")
 
 
-def analyse_asset(asset: AssetConfig, cfg: Config) -> Signal | None:
-    """Pipeline complet pour un seul actif. Retourne None si erreur."""
+def analyse_asset(
+    asset: AssetConfig, cfg: Config
+) -> tuple[Signal | None, PumpDumpSignal | None]:
+    """Pipeline complet pour un seul actif.
+
+    Retourne `(signal, pump_dump)` :
+      - `signal` est le signal BUY/SELL/HOLD multi-stratégies (None si erreur).
+      - `pump_dump` est le signal LONG/SHORT/NONE pour futures (None si erreur).
+
+    Pour les actifs futures, le signal multi-stratégies est aussi calculé
+    (utile comme contexte) mais l'attention principale doit aller sur le
+    signal pump/dump qui est plus adapté à du trading directionnel rapide.
+    """
     try:
         df = fetch_market_data(
             asset.symbol,
@@ -48,13 +66,13 @@ def analyse_asset(asset: AssetConfig, cfg: Config) -> Signal | None:
         )
     except DataSourceError as exc:
         log.error("Data fetch failed for %s: %s", asset.symbol, exc)
-        return None
+        return None, None
 
     try:
         df_ind = add_indicators(df)
     except ValueError as exc:
         log.error("Indicateurs KO pour %s: %s", asset.symbol, exc)
-        return None
+        return None, None
 
     strategy_results = run_all(df_ind)
     sentiment = fetch_news_sentiment(asset.name, cfg.news_api_key)
@@ -68,7 +86,16 @@ def analyse_asset(asset: AssetConfig, cfg: Config) -> Signal | None:
         weights=cfg.weights,
         risk=cfg.risk,
     )
-    return signal
+
+    pump = detect_pump_dump(
+        df_ind,
+        symbol=asset.symbol,
+        name=asset.name,
+        cfg=cfg.pump_dump,
+        sl_atr_mult=cfg.risk.sl_atr_multiplier,
+        tp_atr_mult=cfg.risk.tp_atr_multiplier,
+    )
+    return signal, pump
 
 
 def run_cycle(
@@ -76,25 +103,31 @@ def run_cycle(
     assets: Iterable[AssetConfig],
     *,
     verbose: bool = False,
-) -> list[Signal]:
+) -> tuple[list[Signal], list[PumpDumpSignal]]:
     """Un cycle d'analyse sur tous les actifs.
 
-    Si `verbose` est vrai, on affiche le détail de chaque signal (même HOLD
-    ou sous le seuil) pour donner de la visibilité sur l'état du marché.
+    Pour chaque actif :
+      1. Pipeline classique → signal BUY/SELL/HOLD
+      2. Détecteur pump/dump → signal LONG/SHORT/NONE (alertes futures)
+
+    Les deux types d'alertes sont indépendants et ont leurs propres seuils.
     """
     signals: list[Signal] = []
+    pumps: list[PumpDumpSignal] = []
+
     for asset in assets:
-        log.info("Analyse de %s (%s, %s)", asset.symbol, asset.name, asset.interval)
-        sig = analyse_asset(asset, cfg)
+        log.info("Analyse de %s (%s, %s, %s)",
+                 asset.symbol, asset.name, asset.asset_type, asset.interval)
+        sig, pump = analyse_asset(asset, cfg)
         if sig is None:
             continue
         signals.append(sig)
 
+        # 1) Pipeline classique
         alert_worthy = (
             sig.action != "HOLD"
             and sig.confidence >= cfg.risk.min_confidence_to_alert
         )
-
         if alert_worthy:
             dispatch(
                 sig,
@@ -108,9 +141,35 @@ def run_cycle(
                 sig.symbol, sig.action, sig.confidence, cfg.risk.min_confidence_to_alert,
             )
             if verbose:
-                # Affichage local seulement (pas de Telegram/Discord)
                 print(format_terminal(sig))
-    return signals
+
+        # 2) Détecteur pump/dump (LONG/SHORT futures)
+        if pump is None:
+            continue
+        pumps.append(pump)
+        if pump.direction != "NONE":
+            log.warning(
+                "⚡ %s pump/dump détecté: %s @ %.1f%% — alerte futures",
+                asset.symbol, pump.direction, pump.probability,
+            )
+            dispatch_pump_dump(
+                pump,
+                telegram_token=cfg.telegram_bot_token,
+                telegram_chat=cfg.telegram_chat_id,
+                discord_webhook=cfg.discord_webhook_url,
+            )
+        else:
+            log.info(
+                "%s: pump/dump NONE (long=%.0f / short=%.0f, seuil=%.0f%%)",
+                asset.symbol,
+                pump.metrics.get("long_score", 0.0),
+                pump.metrics.get("short_score", 0.0),
+                cfg.pump_dump.min_probability,
+            )
+            if verbose:
+                print(format_pump_dump_terminal(pump))
+
+    return signals, pumps
 
 
 def parse_args() -> argparse.Namespace:
@@ -175,10 +234,12 @@ def main() -> None:
         try:
             cycle += 1
             log.info("=== Cycle #%d ===", cycle)
-            signals = run_cycle(cfg, assets, verbose=args.verbose)
+            signals, pumps = run_cycle(cfg, assets, verbose=args.verbose)
             if args.json:
                 for s in signals:
                     print(dump_json(s))
+                for p in pumps:
+                    print(dump_json(p))
             if args.once:
                 log.info("Mode --once: sortie après un seul cycle.")
                 return

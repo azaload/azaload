@@ -108,17 +108,27 @@ async def get_watchlist():
     return {"watchlist": STATE.watchlist_snapshot()}
 
 
+_SUPPORTED_TYPES = {"crypto", "futures", "stock", "etf", "commodity", "index", "forex"}
+
+
 @app.post("/api/watchlist")
 async def add_watchlist(asset: dict = Body(...)):
     required = {"symbol", "name", "asset_type"}
     missing = required - asset.keys()
     if missing:
         raise HTTPException(400, f"Champs manquants: {sorted(missing)}")
+    asset_type = asset["asset_type"]
+    if asset_type not in _SUPPORTED_TYPES:
+        raise HTTPException(
+            400,
+            f"Type d'actif non supporté: {asset_type}. "
+            f"Attendu: {sorted(_SUPPORTED_TYPES)}",
+        )
 
     cfg = AssetConfig(
         symbol=asset["symbol"].strip().upper(),
         name=asset.get("name") or asset["symbol"],
-        asset_type=asset["asset_type"],
+        asset_type=asset_type,
         interval=asset.get("interval", "1h"),
         lookback=int(asset.get("lookback", 300)),
     )

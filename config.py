@@ -20,7 +20,7 @@ except ImportError:
     pass
 
 
-AssetType = Literal["crypto", "stock", "commodity", "futures"]
+AssetType = Literal["crypto", "futures", "stock", "etf", "commodity", "index", "forex"]
 
 
 @dataclass

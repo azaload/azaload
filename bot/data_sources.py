@@ -188,11 +188,14 @@ def fetch_market_data(
                 return fetch_binance(symbol, interval=interval, limit=lookback)
             if asset_type == "futures":
                 return fetch_binance_futures(symbol, interval=interval, limit=lookback)
-            if asset_type in ("stock", "commodity"):
+            if asset_type in ("stock", "commodity", "etf", "index", "forex"):
                 return fetch_yfinance(symbol, interval=interval, lookback=lookback)
             raise DataSourceError(f"Type d'actif non supporté: {asset_type}")
         except DataSourceError as exc:
             last_exc = exc
+            # Inutile de retry si le type est carrément non supporté
+            if "non supporté" in str(exc):
+                raise
             if attempt >= retries:
                 break
             wait = backoff ** attempt

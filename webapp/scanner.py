@@ -26,7 +26,7 @@ async def _scan_one(asset: AssetConfig, cfg: Config, state: AppState) -> None:
     except Exception as exc:  # défense en profondeur
         log.exception("Scan KO pour %s", asset.symbol)
         state.add_error(str(exc), symbol=asset.symbol)
-        BROADCASTER.broadcast_threadsafe("error", {
+        BROADCASTER.broadcast_threadsafe("scan_error", {
             "symbol": asset.symbol,
             "asset_type": asset.asset_type,
             "message": str(exc),

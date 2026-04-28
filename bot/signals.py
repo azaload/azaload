@@ -37,19 +37,20 @@ class Signal:
     strategy_breakdown: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
-        return {
+        from .pump_dump import _to_native
+        return _to_native({
             "symbol": self.symbol,
             "name": self.name,
             "action": self.action,
-            "confidence": round(self.confidence, 1),
-            "entry_price": round(self.entry_price, 6),
-            "stop_loss": round(self.stop_loss, 6),
-            "take_profit": round(self.take_profit, 6),
-            "risk_reward": round(self.risk_reward, 2),
+            "confidence": round(float(self.confidence), 1),
+            "entry_price": round(float(self.entry_price), 6),
+            "stop_loss": round(float(self.stop_loss), 6),
+            "take_profit": round(float(self.take_profit), 6),
+            "risk_reward": round(float(self.risk_reward), 2),
             "timestamp": self.timestamp.isoformat(),
-            "reasons": self.reasons,
-            "strategy_breakdown": {k: round(v, 3) for k, v in self.strategy_breakdown.items()},
-        }
+            "reasons": list(self.reasons),
+            "strategy_breakdown": {k: round(float(v), 3) for k, v in self.strategy_breakdown.items()},
+        })
 
 
 def _action_from_score(score: float, hold_threshold: float = 0.15) -> Action:

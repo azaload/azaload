@@ -78,20 +78,41 @@ class PumpDumpSignal:
     reasons: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return {
+        return _to_native({
             "symbol": self.symbol,
             "name": self.name,
             "direction": self.direction,
-            "probability": round(self.probability, 1),
-            "entry_price": round(self.entry_price, 6),
-            "stop_loss": round(self.stop_loss, 6),
-            "take_profit": round(self.take_profit, 6),
-            "risk_reward": round(self.risk_reward, 2),
+            "probability": round(float(self.probability), 1),
+            "entry_price": round(float(self.entry_price), 6),
+            "stop_loss": round(float(self.stop_loss), 6),
+            "take_profit": round(float(self.take_profit), 6),
+            "risk_reward": round(float(self.risk_reward), 2),
             "timestamp": self.timestamp.isoformat(),
             "triggers": self.triggers,
-            "metrics": {k: round(v, 6) for k, v in self.metrics.items()},
-            "reasons": self.reasons,
-        }
+            "metrics": {k: round(float(v), 6) for k, v in self.metrics.items()},
+            "reasons": list(self.reasons),
+        })
+
+
+def _to_native(value):
+    """Convertit récursivement les types numpy/pandas en types Python natifs.
+
+    FastAPI/jsonable_encoder ne sait pas sérialiser `numpy.bool_` ni
+    `numpy.float64` directement, et les opérations sur Series renvoient
+    parfois ces types. On normalise au moment de la sortie API.
+    """
+    if isinstance(value, dict):
+        return {k: _to_native(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_to_native(v) for v in value]
+    if isinstance(value, bool):
+        return bool(value)
+    if hasattr(value, "item") and not isinstance(value, (str, bytes)):
+        try:
+            return value.item()
+        except (AttributeError, ValueError):
+            return value
+    return value
 
 
 def _safe(value: float, default: float = 0.0) -> float:

@@ -12,6 +12,7 @@ const state = {
   watchlist: [],
   status: null,
   config: null,
+  catalogEntries: [],  // dernière liste affichée dans le dialog catalog
 };
 
 // --------------------------------------------------------------------------
@@ -69,11 +70,18 @@ function renderHeaderStats() {
 
 function renderWatchlist() {
   const root = $('#watchlist');
+  $('#watchlist-count').textContent = state.watchlist.length;
+
   if (!state.watchlist.length) {
     root.innerHTML = '<div class="empty-hint" style="padding:12px">Aucun actif. Cliquez sur <b>+ Catalogue</b>.</div>';
     return;
   }
-  root.innerHTML = state.watchlist.map(a => `
+  // Limite l'affichage à 200 entrées pour rester fluide même avec 700+ actifs
+  const items = state.watchlist;
+  const displayed = items.slice(0, 200);
+  const overflow = items.length - displayed.length;
+
+  root.innerHTML = displayed.map(a => `
     <div class="watchlist-item" data-key="${a.asset_type}:${a.symbol}">
       <div>
         <div>${a.symbol}</div>
@@ -81,7 +89,9 @@ function renderWatchlist() {
       </div>
       <button class="remove" title="Retirer" data-rm="${a.asset_type}:${a.symbol}">✕</button>
     </div>
-  `).join('');
+  `).join('') + (overflow > 0
+    ? `<div class="empty-hint" style="padding:8px;font-size:11px">+ ${overflow} autres actifs (recherche/filtres pour les retrouver)</div>`
+    : '');
 
   $$('.watchlist-item .remove').forEach(btn => {
     btn.addEventListener('click', async (e) => {
@@ -270,11 +280,21 @@ async function loadCatalog() {
   const params = new URLSearchParams();
   if (q) params.set('q', q);
   if (type) params.set('type', type);
-  params.set('limit', '300');
+  params.set('limit', '500');
   const r = await api(`/api/catalog?${params}`);
+  state.catalogEntries = r.entries;
+  renderCatalogList();
+}
 
+function renderCatalogList() {
   const watchKeys = new Set(state.watchlist.map(a => `${a.asset_type}:${a.symbol}`));
-  $('#catalog-list').innerHTML = r.entries.map(e => {
+  const entries = state.catalogEntries;
+
+  const selectedHere = entries.filter(e => watchKeys.has(`${e.asset_type}:${e.symbol}`)).length;
+  $('#catalog-count').innerHTML =
+    `<b>${selectedHere}</b> / ${entries.length} affichés sélectionnés`;
+
+  $('#catalog-list').innerHTML = entries.map(e => {
     const inList = watchKeys.has(`${e.asset_type}:${e.symbol}`);
     return `
       <div class="catalog-row">
@@ -304,6 +324,10 @@ async function loadCatalog() {
         state.watchlist = r.watchlist;
         renderWatchlist();
         btn.textContent = '✓ ajouté';
+        // Met à jour le compteur sans tout reconstruire
+        const watchKeys2 = new Set(state.watchlist.map(a => `${a.asset_type}:${a.symbol}`));
+        const sel2 = state.catalogEntries.filter(x => watchKeys2.has(`${x.asset_type}:${x.symbol}`)).length;
+        $('#catalog-count').innerHTML = `<b>${sel2}</b> / ${state.catalogEntries.length} affichés sélectionnés`;
       } catch (err) {
         btn.disabled = false;
         btn.textContent = '+ ajouter';
@@ -311,6 +335,71 @@ async function loadCatalog() {
       }
     });
   });
+}
+
+async function selectAllVisible() {
+  if (!state.catalogEntries.length) return;
+  const watchKeys = new Set(state.watchlist.map(a => `${a.asset_type}:${a.symbol}`));
+  const toAdd = state.catalogEntries.filter(e => !watchKeys.has(`${e.asset_type}:${e.symbol}`));
+  if (!toAdd.length) return;
+
+  const btn = $('#btn-select-all');
+  btn.disabled = true; btn.textContent = `+ ajout (${toAdd.length})…`;
+  try {
+    await api('/api/watchlist/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ assets: toAdd }),
+    });
+    const r = await api('/api/watchlist');
+    state.watchlist = r.watchlist;
+    renderWatchlist();
+    renderCatalogList();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '+ Tout sélectionner';
+  }
+}
+
+async function deselectAllVisible() {
+  if (!state.catalogEntries.length) return;
+  const watchKeys = new Set(state.watchlist.map(a => `${a.asset_type}:${a.symbol}`));
+  const toRemove = state.catalogEntries
+    .filter(e => watchKeys.has(`${e.asset_type}:${e.symbol}`))
+    .map(e => ({ symbol: e.symbol, asset_type: e.asset_type }));
+  if (!toRemove.length) return;
+
+  const btn = $('#btn-deselect-all');
+  btn.disabled = true; btn.textContent = `– retrait (${toRemove.length})…`;
+  try {
+    await api('/api/watchlist/bulk', {
+      method: 'DELETE',
+      body: JSON.stringify({ items: toRemove }),
+    });
+    const r = await api('/api/watchlist');
+    state.watchlist = r.watchlist;
+    renderWatchlist();
+    renderCatalogList();
+    renderGrid();
+  } catch (err) {
+    alert('Erreur: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '– Tout désélectionner';
+  }
+}
+
+async function clearWatchlist() {
+  if (!state.watchlist.length) return;
+  if (!confirm(`Vider la watchlist (${state.watchlist.length} actifs) ?`)) return;
+  await api('/api/watchlist', { method: 'DELETE' });
+  const r = await api('/api/watchlist');
+  state.watchlist = r.watchlist;
+  state.signals = [];
+  state.pumps = {};
+  renderWatchlist();
+  renderGrid();
 }
 
 // --------------------------------------------------------------------------
@@ -442,6 +531,9 @@ function wireUI() {
   $('#catalog-search').addEventListener('input', debounce(loadCatalog, 250));
   $('#catalog-type').addEventListener('change', loadCatalog);
   $('#catalog-refresh').addEventListener('click', loadCatalog);
+  $('#btn-select-all').addEventListener('click', selectAllVisible);
+  $('#btn-deselect-all').addEventListener('click', deselectAllVisible);
+  $('#btn-clear-watchlist').addEventListener('click', clearWatchlist);
 
   $('#btn-config').addEventListener('click', async () => {
     await loadConfig();

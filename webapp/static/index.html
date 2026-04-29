@@ -29,8 +29,14 @@
 
   <div class="layout">
     <aside class="sidebar">
-      <h3>Watchlist</h3>
+      <h3>
+        Watchlist
+        <span class="watchlist-count" id="watchlist-count">—</span>
+      </h3>
       <div class="watchlist" id="watchlist"></div>
+      <button id="btn-clear-watchlist" class="ghost danger" title="Vider la watchlist">
+        Vider la watchlist
+      </button>
     </aside>
 
     <main class="main">
@@ -79,7 +85,13 @@
         <option value="index">Indices</option>
         <option value="forex">Forex</option>
       </select>
-      <button id="catalog-refresh" class="ghost">↻</button>
+      <button id="catalog-refresh" class="ghost" title="Recharger">↻</button>
+    </div>
+    <div class="catalog-bulk">
+      <span id="catalog-count">—</span>
+      <span class="filter-spacer"></span>
+      <button id="btn-select-all" class="ghost">+ Tout sélectionner</button>
+      <button id="btn-deselect-all" class="ghost">– Tout désélectionner</button>
     </div>
     <div class="catalog-list" id="catalog-list"></div>
   </dialog>

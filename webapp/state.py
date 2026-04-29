@@ -61,6 +61,22 @@ class AppState:
             self._persist_watchlist_locked()
             return True
 
+    def add_many_to_watchlist(self, assets: list[AssetConfig]) -> int:
+        """Ajoute plusieurs actifs en une fois, en dédupliquant. Retourne le nombre ajouté."""
+        with self._lock:
+            existing_keys = {(a.symbol, a.asset_type) for a in self.watchlist}
+            added = 0
+            for a in assets:
+                key = (a.symbol, a.asset_type)
+                if key in existing_keys:
+                    continue
+                existing_keys.add(key)
+                self.watchlist.append(a)
+                added += 1
+            if added:
+                self._persist_watchlist_locked()
+            return added
+
     def remove_from_watchlist(self, symbol: str, asset_type: str) -> bool:
         with self._lock:
             before = len(self.watchlist)
@@ -75,6 +91,33 @@ class AppState:
                 self.pumps.pop(key, None)
                 self._persist_watchlist_locked()
             return removed
+
+    def remove_many_from_watchlist(self, items: list[tuple[str, str]]) -> int:
+        """Retire plusieurs actifs (chaque item: (symbol, asset_type)). Retourne le nombre retiré."""
+        targets = {(s.upper(), t) for s, t in items}
+        with self._lock:
+            before = len(self.watchlist)
+            kept = []
+            for a in self.watchlist:
+                if (a.symbol.upper(), a.asset_type) in targets:
+                    self.signals.pop(self._key(a.asset_type, a.symbol), None)
+                    self.pumps.pop(self._key(a.asset_type, a.symbol), None)
+                    continue
+                kept.append(a)
+            self.watchlist = kept
+            removed = before - len(self.watchlist)
+            if removed:
+                self._persist_watchlist_locked()
+            return removed
+
+    def clear_watchlist(self) -> int:
+        with self._lock:
+            count = len(self.watchlist)
+            self.watchlist = []
+            self.signals.clear()
+            self.pumps.clear()
+            self._persist_watchlist_locked()
+            return count
 
     def watchlist_snapshot(self) -> list[dict]:
         with self._lock:

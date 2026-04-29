@@ -42,8 +42,11 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Charge la watchlist persistée (ou défaut depuis config.assets)
-    STATE.load_watchlist(CONFIG.assets)
+    # Si pas de watchlist persistée, on peuple avec TOUT le catalogue
+    # disponible (curé Yahoo + Binance Spot + Binance Futures). Sinon on
+    # charge l'existant (les choix utilisateur sont préservés).
+    seeds = await asyncio.to_thread(_compute_default_seeds)
+    STATE.load_watchlist(seeds)
     log.info("Lifespan startup: watchlist=%d, config interval=%ds",
              len(STATE.watchlist), CONFIG.poll_interval_seconds)
 
@@ -57,6 +60,34 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+
+
+def _compute_default_seeds() -> list[AssetConfig]:
+    """Construit la liste seed pour la première initialisation.
+
+    Tente de récupérer l'intégralité du catalogue (curé + Binance) ; si la
+    récupération réseau échoue on retombe sur la liste minimale de
+    `CONFIG.assets`. Cette fonction est appelée dans un thread car la
+    récupération HTTP est bloquante.
+    """
+    try:
+        entries = catalog.all_entries(refresh=True)
+    except Exception as exc:
+        log.warning("Seed depuis catalogue KO (%s); fallback config.assets", exc)
+        return list(CONFIG.assets)
+
+    if not entries:
+        return list(CONFIG.assets)
+
+    return [
+        AssetConfig(
+            symbol=e.symbol,
+            name=e.name,
+            asset_type=e.asset_type,
+            interval=e.interval,
+        )
+        for e in entries
+    ]
 
 
 app = FastAPI(title="azaload trading dashboard", lifespan=lifespan)
@@ -142,6 +173,74 @@ async def remove_watchlist(asset_type: str, symbol: str):
     removed = STATE.remove_from_watchlist(symbol.upper(), asset_type)
     BROADCASTER.broadcast_threadsafe("watchlist", STATE.watchlist_snapshot())
     return {"removed": removed, "watchlist": STATE.watchlist_snapshot()}
+
+
+@app.post("/api/watchlist/bulk")
+async def add_watchlist_bulk(payload: dict = Body(...)):
+    """Ajoute plusieurs actifs en une fois.
+
+    Format attendu: {"assets": [{symbol, name, asset_type, interval?, lookback?}, ...]}.
+    Les types non supportés sont silencieusement ignorés.
+    """
+    raw = payload.get("assets") or []
+    if not isinstance(raw, list):
+        raise HTTPException(400, "Champ 'assets' attendu: liste")
+
+    assets: list[AssetConfig] = []
+    skipped = 0
+    for item in raw:
+        if not isinstance(item, dict):
+            skipped += 1
+            continue
+        if item.get("asset_type") not in _SUPPORTED_TYPES:
+            skipped += 1
+            continue
+        try:
+            assets.append(AssetConfig(
+                symbol=str(item["symbol"]).strip().upper(),
+                name=item.get("name") or item["symbol"],
+                asset_type=item["asset_type"],
+                interval=item.get("interval", "1h"),
+                lookback=int(item.get("lookback", 300)),
+            ))
+        except (KeyError, ValueError, TypeError):
+            skipped += 1
+
+    added = STATE.add_many_to_watchlist(assets)
+    BROADCASTER.broadcast_threadsafe("watchlist", STATE.watchlist_snapshot())
+    return {
+        "requested": len(raw),
+        "added": added,
+        "skipped": skipped,
+        "watchlist_size": len(STATE.watchlist),
+    }
+
+
+@app.api_route("/api/watchlist/bulk", methods=["DELETE"])
+async def remove_watchlist_bulk(payload: dict = Body(...)):
+    """Retire plusieurs actifs en une fois.
+
+    Format: {"items": [{"symbol": "...", "asset_type": "..."}, ...]}.
+    """
+    raw = payload.get("items") or []
+    if not isinstance(raw, list):
+        raise HTTPException(400, "Champ 'items' attendu: liste")
+    targets = [
+        (str(it["symbol"]).strip(), str(it["asset_type"]))
+        for it in raw
+        if isinstance(it, dict) and "symbol" in it and "asset_type" in it
+    ]
+    removed = STATE.remove_many_from_watchlist(targets)
+    BROADCASTER.broadcast_threadsafe("watchlist", STATE.watchlist_snapshot())
+    return {"removed": removed, "watchlist_size": len(STATE.watchlist)}
+
+
+@app.delete("/api/watchlist")
+async def clear_watchlist():
+    """Vide totalement la watchlist."""
+    count = STATE.clear_watchlist()
+    BROADCASTER.broadcast_threadsafe("watchlist", STATE.watchlist_snapshot())
+    return {"cleared": count}
 
 
 # --------------------------------------------------------------------------

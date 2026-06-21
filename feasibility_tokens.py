@@ -166,12 +166,33 @@ def main() -> int:
               f"({saving:.1f}% de tokens en moins que le français).")
     else:
         print("Le français est déjà la plus économe sur cet échantillon.")
+        return 0
 
+    # --- Analyse économique : la traduction n'est pas gratuite ---
+    tgt = totals[best]
+    save_per_reuse = base - tgt  # tokens économisés à chaque envoi
     print()
-    print("Note : économie par message envoyé. La traduction elle-même coûte")
-    print("des tokens de génération + perte de fidélité ; rentable surtout sur")
-    print("du contenu volumineux RÉUTILISÉ souvent (system prompt, contexte mis")
-    print("en cache), pas sur des échanges one-shot.")
+    print("=== Faisabilité économique (le vrai juge) ===")
+    print(f"Économie par envoi : {save_per_reuse} tokens d'entrée "
+          f"({saving:.1f}%).")
+    print()
+
+    # Scénario A : contexte statique traduit UNE fois puis réutilisé/caché.
+    # Coût unique ~= lire le FR + générer la trad (base + tgt tokens).
+    overhead = base + tgt
+    breakeven = overhead / save_per_reuse if save_per_reuse > 0 else float("inf")
+    print("A) Contexte STATIQUE (ex: system prompt traduit 1 fois, réutilisé) :")
+    print(f"   Coût unique de traduction ~= {overhead} tokens.")
+    print(f"   Rentable à partir d'environ {breakeven:.0f} réutilisations.")
+    print("   -> Faisable. MAIS le prompt caching économise ~90% sans rien")
+    print("      traduire ni perdre en fidélité : presque toujours supérieur.")
+    print()
+
+    # Scénario B : aller-retour à CHAQUE message (FR->opti, réponse opti->FR).
+    # Chaque message ajoute 2 traductions (entrée + sortie).
+    print("B) ALLER-RETOUR par message (FR->langue, puis réponse->FR) :")
+    print(f"   Chaque message ajoute 2 traductions (~{overhead}+ tokens) pour")
+    print(f"   gagner {save_per_reuse} tokens. Verdict : JAMAIS rentable.")
 
     if not use_api:
         print()
